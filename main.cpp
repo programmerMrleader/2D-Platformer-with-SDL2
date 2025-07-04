@@ -4,6 +4,11 @@
 #include <chrono>
 #include <utility>
 #include <iostream>
+//write some comments about the code
+
+//This code implements a simple platformer game using SDL2.
+//It features a player character that can move left and right, jump, and crouch.   
+//The player can perform animations for idle, running, jumping, and crouching states.
 
 // Constants
 #define SCREEN_HEIGHT 480
@@ -13,9 +18,7 @@
 #define SDL_MAIN_HANDLED
 
 const double FRAME_DURATION = 150.0;
-
 typedef std::chrono::high_resolution_clock Clock;
-
 typedef struct {
     float x, y;
     float velx, vely;
@@ -23,14 +26,29 @@ typedef struct {
     int width, height;
 } Player;
 
+typedef struct {
+    float x, y;
+    float velx, vely;
+    int width, height;
+} Enemy;
+
 // Animation states
 enum class AnimationState {
     IDLE,
     RUNNING,
     JUMPING,
-    CROUCHING
+    CROUCHING,
+    ATTACKING
 };
-
+// This function checks for collision between the player and an enemy.
+// It returns true if there is a collision, false otherwise.
+// The collision is determined by checking if the bounding boxes of the player and enemy overlap.
+bool checkCollision(const Player& player, const Enemy& enemy) {
+    return (player.x < enemy.x + enemy.width &&
+            player.x + player.width > enemy.x &&
+            player.y < enemy.y + enemy.height &&
+            player.y + player.height > enemy.y);
+}
 int WinMain(int argc, char* argv[]) {
     // Initialize SDL
     if (SDL_Init(SDL_INIT_VIDEO)) {
@@ -78,6 +96,7 @@ int WinMain(int argc, char* argv[]) {
 
     // Game variables
     bool run = true;
+    bool isAttacking = false;
     Player player = {100, 100, 0, 0, false, 32, 32};
     const float groundY = 400;
     int player_speed = 5;
@@ -105,7 +124,8 @@ int WinMain(int argc, char* argv[]) {
     std::vector<std::pair<size_t, size_t>> crouch{{0,4}, {0,5}, {0,6}, {1,0}};
     std::vector<std::pair<size_t, size_t>> running{{1,1}, {1,2}, {1,3}, {1,4}, {1,5}, {1,6}};
     std::vector<std::pair<size_t, size_t>> jump{{2,0}, {2,1}, {2,2}, {2,3}}; // FIXED
-    
+    std::vector<std::pair<size_t, size_t>> fall{{2,4}, {2,5}, {2,6}}; // FIXED
+    std::vector<std::pair<size_t, size_t>> sword{{3,0}, {3,1}, {3,2}, {3,3}, {3,4}, {3,5}}; // FIXED
     AnimationState currentState = AnimationState::IDLE;
     auto* currentAnimation = &idle;
     size_t animationIndex = 0;
@@ -115,7 +135,7 @@ int WinMain(int argc, char* argv[]) {
     // Direction handling
     bool facingRight = true;
     bool moving = false;
-
+    
     // Main game loop
     while (run) {
         auto now = Clock::now();
@@ -147,6 +167,14 @@ int WinMain(int argc, char* argv[]) {
                         currentAnimation = &crouch;
                         animationIndex = 0;
                         break;
+                    case SDL_SCANCODE_E:
+                        if (!isAttacking) {
+                            isAttacking = true;
+                            currentState = AnimationState::ATTACKING;
+                            currentAnimation = &sword;
+                            animationIndex = 0;
+                        }
+                        break;
                 }
             }
             else if (event.type == SDL_KEYUP) {
@@ -167,7 +195,7 @@ int WinMain(int argc, char* argv[]) {
         moving = false;
         
         // Handle movement
-        if (key[SDL_SCANCODE_D]) {
+        if (key[SDL_SCANCODE_D] && player.x < SCREEN_WIDTH - player.width) {
             player.x += player_speed;
             facingRight = true;
             moving = true;
@@ -176,7 +204,7 @@ int WinMain(int argc, char* argv[]) {
                 currentAnimation = &running;
             }
         }
-        if (key[SDL_SCANCODE_A]) {
+        if (key[SDL_SCANCODE_A] && player.x > 0) {
             player.x -= player_speed;
             facingRight = false;
             moving = true;
@@ -185,7 +213,7 @@ int WinMain(int argc, char* argv[]) {
                 currentAnimation = &running;
             }
         }
-        
+       
         // If not moving and not jumping, return to idle
         if (!moving && !player.isJumping && currentState != AnimationState::CROUCHING) {
             currentState = AnimationState::IDLE;
