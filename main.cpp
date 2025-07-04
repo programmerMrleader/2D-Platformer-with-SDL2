@@ -1,3 +1,7 @@
+//Made by me
+//Feel free to use this code as you wish, but please give credit if you use it in your projects.
+//This code is a simple platformer game using SDL2.
+
 #include "SDL2/SDL.h"
 #include "SDL2/SDL_image.h"
 #include <vector>
