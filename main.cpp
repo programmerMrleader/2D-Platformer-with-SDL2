@@ -1,40 +1,15 @@
-//Made by me
-//Feel free to use this code as you wish, but please give credit if you use it in your projects.
-//This code is a simple platformer game using SDL2.
-
 #include "SDL2/SDL.h"
 #include "SDL2/SDL_image.h"
-#include <vector>
-#include <chrono>
-#include <utility>
 #include <iostream>
-//write some comments about the code
+#include <vector>
 
-//This code implements a simple platformer game using SDL2.
-//It features a player character that can move left and right, jump, and crouch.   
-//The player can perform animations for idle, running, jumping, and crouching states.
-
-// Constants
-#define SCREEN_HEIGHT 480
-#define SCREEN_WIDTH 640
-#define GRAVITY 0.5f
-#define JUMP_FORCE -12.0f
-#define SDL_MAIN_HANDLED
-
-const double FRAME_DURATION = 150.0;
-typedef std::chrono::high_resolution_clock Clock;
-typedef struct {
-    float x, y;
-    float velx, vely;
-    bool isJumping;
-    int width, height;
-} Player;
-
-typedef struct {
-    float x, y;
-    float velx, vely;
-    int width, height;
-} Enemy;
+// Game constants
+const int SCREEN_WIDTH = 640;
+const int SCREEN_HEIGHT = 480;
+const float GRAVITY = 0.5f;
+const float JUMP_FORCE = -12.0f;
+const float PLAYER_SPEED = 5.0f;
+const int ANIMATION_FRAME_DURATION = 150; // ms
 
 // Animation states
 enum class AnimationState {
@@ -44,257 +19,300 @@ enum class AnimationState {
     CROUCHING,
     ATTACKING
 };
-// This function checks for collision between the player and an enemy.
-// It returns true if there is a collision, false otherwise.
-// The collision is determined by checking if the bounding boxes of the player and enemy overlap.
-bool checkCollision(const Player& player, const Enemy& enemy) {
-    return (player.x < enemy.x + enemy.width &&
-            player.x + player.width > enemy.x &&
-            player.y < enemy.y + enemy.height &&
-            player.y + player.height > enemy.y);
-}
-int WinMain(int argc, char* argv[]) {
-    // Initialize SDL
-    if (SDL_Init(SDL_INIT_VIDEO)) {
+
+// Player structure
+struct Player {
+    float x, y;
+    float velx, vely;
+    bool isJumping;
+    int width, height;
+    AnimationState state;
+    bool facingRight;
+};
+
+// Animation frame definition
+struct Animation {
+    int startRow;         // Starting row in sprite sheet
+    int frameCount;       // Total number of frames
+    bool multiRow;        // Does this animation span multiple rows?
+    int framesPerRow;     // Frames per row if multiRow is true
+};
+
+// Game resources
+struct Game {
+    SDL_Window* window;
+    SDL_Renderer* renderer;
+    SDL_Texture* playerTexture;
+    Player player;
+    float groundY;
+    std::vector<Animation> animations;
+    int currentAnimIndex;
+    int animFrame;
+    double animTimer;
+};
+
+// Initialize SDL and create window
+bool initSDL(Game& game) {
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << std::endl;
-        return 1;
+        return false;
     }
     
     if (IMG_Init(IMG_INIT_PNG) == 0) {
         std::cerr << "IMG_Init failed: " << IMG_GetError() << std::endl;
         SDL_Quit();
-        return 1;
+        return false;
     }
-    
-    // Create window and renderer
-    SDL_Window* window = SDL_CreateWindow("Platformer Game", 
-                                        SDL_WINDOWPOS_UNDEFINED, 
-                                        SDL_WINDOWPOS_UNDEFINED,
-                                        SCREEN_WIDTH, SCREEN_HEIGHT, 0);
-    if (!window) {
+
+    game.window = SDL_CreateWindow("Platformer Game", 
+                                  SDL_WINDOWPOS_UNDEFINED, 
+                                  SDL_WINDOWPOS_UNDEFINED,
+                                  SCREEN_WIDTH, SCREEN_HEIGHT, 0);
+    if (!game.window) {
         std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
         IMG_Quit();
         SDL_Quit();
-        return 1;
+        return false;
     }
     
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) {
+    game.renderer = SDL_CreateRenderer(game.window, -1, SDL_RENDERER_ACCELERATED);
+    if (!game.renderer) {
         std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << std::endl;
-        SDL_DestroyWindow(window);
+        SDL_DestroyWindow(game.window);
         IMG_Quit();
         SDL_Quit();
-        return 1;
+        return false;
     }
     
-    // Load texture
-    SDL_Texture* hero = IMG_LoadTexture(renderer, "assets/adventurer-Sheet.png");
-    if (!hero) {
+    return true;
+}
+
+// Load game resources
+bool loadResources(Game& game) {
+    game.playerTexture = IMG_LoadTexture(game.renderer, "assets/adventurer-Sheet.png");
+    if (!game.playerTexture) {
         std::cerr << "Failed to load texture: " << IMG_GetError() << std::endl;
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        IMG_Quit();
-        SDL_Quit();
-        return 1;
+        return false;
     }
 
-    // Game variables
-    bool run = true;
-    bool isAttacking = false;
-    Player player = {100, 100, 0, 0, false, 32, 32};
-    const float groundY = 400;
-    int player_speed = 5;
+    // Initialize animations
+    // Format: {row, {frame1, frame2, ...}}
+    game.animations = {
+        {0, 4, false, 0},    // IDLE: row 0, 4 frames
+        {1, 6, false, 0},    // RUNNING: row 1, 6 frames
+        {2, 4, false, 0},    // JUMPING: row 2, 4 frames
+        {0, 6, false, 0},    // CROUCHING: row 0, frames 4-6 (adjust as needed)
+        {5, 12, true, 6}     // ATTACKING: starts at row 3, 12 frames, 6 per row (2 rows)
+    };
+
+    return true;
+}
+
+// Initialize game state
+void initGame(Game& game) {
+    game.player = {100, 100, 0, 0, false, 50, 50, AnimationState::IDLE, true};
+    game.groundY = 400;
+    game.currentAnimIndex = 0;
+    game.animFrame = 0;
+    game.animTimer = 0;
+}
+
+// Handle keyboard input
+void handleInput(Game& game, const Uint8* keys) {
+    Player& p = game.player;
     
-    // Animation setup
-    const size_t nbRow = 11;
-    const size_t nbCol = 7;
-    const size_t spriteWidth = 50;
-    const size_t spriteHeight = 37;
+    // Reset movement flag
+    bool moving = false;
     
-    std::vector<SDL_Rect> rects;
-    for (size_t i = 0; i < nbRow; i++) {
-        for (size_t j = 0; j < nbCol; j++) {
-            rects.push_back(SDL_Rect{
-                static_cast<int>(j * spriteWidth),
-                static_cast<int>(i * spriteHeight),
-                static_cast<int>(spriteWidth),
-                static_cast<int>(spriteHeight)
-            });
+    // Handle movement
+    if (keys[SDL_SCANCODE_D] && p.x < SCREEN_WIDTH - p.width) {
+        p.x += PLAYER_SPEED;
+        p.facingRight = true;
+        moving = true;
+        if (!p.isJumping && p.state != AnimationState::CROUCHING) {
+            p.state = AnimationState::RUNNING;
+        }
+    }
+    if (keys[SDL_SCANCODE_A] && p.x > 0) {
+        p.x -= PLAYER_SPEED;
+        p.facingRight = false;
+        moving = true;
+        if (!p.isJumping && p.state != AnimationState::CROUCHING) {
+            p.state = AnimationState::RUNNING;
         }
     }
     
-    // Animation frames - FIXED JUMP ANIMATION
-    std::vector<std::pair<size_t, size_t>> idle{{0,0}, {0,1}, {0,2}, {0,3}};
-    std::vector<std::pair<size_t, size_t>> crouch{{0,4}, {0,5}, {0,6}, {1,0}};
-    std::vector<std::pair<size_t, size_t>> running{{1,1}, {1,2}, {1,3}, {1,4}, {1,5}, {1,6}};
-    std::vector<std::pair<size_t, size_t>> jump{{2,0}, {2,1}, {2,2}, {2,3}}; // FIXED
-    std::vector<std::pair<size_t, size_t>> fall{{2,4}, {2,5}, {2,6}}; // FIXED
-    std::vector<std::pair<size_t, size_t>> sword{{3,0}, {3,1}, {3,2}, {3,3}, {3,4}, {3,5}}; // FIXED
-    AnimationState currentState = AnimationState::IDLE;
-    auto* currentAnimation = &idle;
-    size_t animationIndex = 0;
-    double timeBuffer = 0;
-    auto lastTime = Clock::now();
+    // Jumping
+    if (keys[SDL_SCANCODE_SPACE] && !p.isJumping && p.state != AnimationState::ATTACKING) {
+        p.vely = JUMP_FORCE;
+        p.isJumping = true;
+        p.state = AnimationState::JUMPING;
+    }
     
-    // Direction handling
-    bool facingRight = true;
-    bool moving = false;
+    // Crouching
+    if (keys[SDL_SCANCODE_LCTRL] && !p.isJumping) {
+        p.state = AnimationState::CROUCHING;
+    }
+    
+    // Attacking
+    if (keys[SDL_SCANCODE_E] && !p.isJumping) {
+        p.state = AnimationState::ATTACKING;
+    }
+    
+    // Return to idle if not moving
+    if (!moving && !p.isJumping && p.state != AnimationState::CROUCHING && p.state != AnimationState::ATTACKING) {
+        p.state = AnimationState::IDLE;
+    }
+}
+
+// Update game state
+void updateGame(Game& game, double deltaTime) {
+    Player& p = game.player;
+    
+    // Apply physics
+    p.vely += GRAVITY;
+    p.y += p.vely;
+    
+    // Ground collision
+    if (p.y >= game.groundY) {
+        p.y = game.groundY;
+        p.vely = 0;
+        p.isJumping = false;
+        
+        // Reset to idle after landing
+        if (p.state == AnimationState::JUMPING) {
+            p.state = AnimationState::IDLE;
+        }
+    }
+    
+    // Update animation
+    game.animTimer += deltaTime;
+    const Animation& anim = game.animations[static_cast<int>(game.player.state)];
+    if (game.animTimer > ANIMATION_FRAME_DURATION) {
+        game.animTimer = 0;
+        game.animFrame++;
+        if (game.animFrame >= anim.frameCount) {
+            game.animFrame = 0;
+            if (game.player.state == AnimationState::ATTACKING) {
+                game.player.state = AnimationState::IDLE;
+            }
+        }
+    }
+}
+
+// Render the game
+void renderGame(Game& game) {
+    // Clear screen
+    SDL_SetRenderDrawColor(game.renderer, 0, 0, 0, 255);
+    SDL_RenderClear(game.renderer);
+    
+    // Get current animation frame
+    const Animation& anim = game.animations[static_cast<int>(game.player.state)];
+    int frame = game.animFrame;
+
+    int row = anim.startRow;
+    int col = frame;
+
+    if (anim.multiRow) {
+        row += frame / anim.framesPerRow;
+        col = frame % anim.framesPerRow;
+    }
+
+    SDL_Rect srcRect = {
+        col * 50,  // Assuming 50px wide frames
+        row * 37,  // Assuming 37px tall frames
+        50,
+        37
+    };
+    
+    // Destination rectangle for player
+    SDL_Rect destRect = {
+        static_cast<int>(game.player.x),
+        static_cast<int>(game.player.y),
+        game.player.width,
+        game.player.height
+    };
+    
+    // Draw player
+    SDL_RenderCopyEx(
+        game.renderer,
+        game.playerTexture,
+        &srcRect,
+        &destRect,
+        0,
+        NULL,
+        game.player.facingRight ? SDL_FLIP_NONE : SDL_FLIP_HORIZONTAL
+    );
+    
+    // Draw ground line
+    SDL_SetRenderDrawColor(game.renderer, 255, 255, 255, 255);
+    SDL_RenderDrawLine(game.renderer, 0, static_cast<int>(game.groundY), 
+                      SCREEN_WIDTH, static_cast<int>(game.groundY));
+    
+    // Present to screen
+    SDL_RenderPresent(game.renderer);
+}
+
+// Clean up resources
+void cleanup(Game& game) {
+    SDL_DestroyTexture(game.playerTexture);
+    SDL_DestroyRenderer(game.renderer);
+    SDL_DestroyWindow(game.window);
+    IMG_Quit();
+    SDL_Quit();
+}
+
+int WinMain(int argc, char* argv[]) {
+    Game game;
+    
+    // Initialize everything
+    if (!initSDL(game)) return 1;
+    if (!loadResources(game)) {
+        cleanup(game);
+        return 1;
+    }
+    initGame(game);
     
     // Main game loop
-    while (run) {
-        auto now = Clock::now();
-        double deltaTime = std::chrono::duration<double, std::milli>(now - lastTime).count(); // FIXED
-        lastTime = now;
-
+    bool running = true;
+    Uint32 lastTime = SDL_GetTicks();
+    
+    while (running) {
+        // Calculate delta time
+        Uint32 currentTime = SDL_GetTicks();
+        double deltaTime = currentTime - lastTime;
+        lastTime = currentTime;
+        
         // Event handling
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
-                run = false;
+                running = false;
             }
             else if (event.type == SDL_KEYDOWN) {
-                switch (event.key.keysym.scancode) {
-                    case SDL_SCANCODE_ESCAPE:
-                        run = false;
-                        break;
-                    case SDL_SCANCODE_SPACE:
-                        if (!player.isJumping) {
-                            player.vely = JUMP_FORCE;
-                            player.isJumping = true;
-                            currentState = AnimationState::JUMPING;
-                            currentAnimation = &jump;
-                            animationIndex = 0;
-                        }
-                        break;
-                    case SDL_SCANCODE_LCTRL:
-                        currentState = AnimationState::CROUCHING;
-                        currentAnimation = &crouch;
-                        animationIndex = 0;
-                        break;
-                    case SDL_SCANCODE_E:
-                        if (!isAttacking) {
-                            isAttacking = true;
-                            currentState = AnimationState::ATTACKING;
-                            currentAnimation = &sword;
-                            animationIndex = 0;
-                        }
-                        break;
-                }
-            }
-            else if (event.type == SDL_KEYUP) {
-                switch (event.key.keysym.scancode) {
-                    case SDL_SCANCODE_LCTRL:
-                        if (!player.isJumping) {
-                            currentState = AnimationState::IDLE;
-                            currentAnimation = &idle;
-                            animationIndex = 0;
-                        }
-                        break;
+                if (event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                    running = false;
                 }
             }
         }
-
-        // Keyboard state handling
-        const Uint8* key = SDL_GetKeyboardState(NULL);
-        moving = false;
         
-        // Handle movement
-        if (key[SDL_SCANCODE_D] && player.x < SCREEN_WIDTH - player.width) {
-            player.x += player_speed;
-            facingRight = true;
-            moving = true;
-            if (!player.isJumping && currentState != AnimationState::CROUCHING) {
-                currentState = AnimationState::RUNNING;
-                currentAnimation = &running;
-            }
-        }
-        if (key[SDL_SCANCODE_A] && player.x > 0) {
-            player.x -= player_speed;
-            facingRight = false;
-            moving = true;
-            if (!player.isJumping && currentState != AnimationState::CROUCHING) {
-                currentState = AnimationState::RUNNING;
-                currentAnimation = &running;
-            }
-        }
-       
-        // If not moving and not jumping, return to idle
-        if (!moving && !player.isJumping && currentState != AnimationState::CROUCHING) {
-            currentState = AnimationState::IDLE;
-            currentAnimation = &idle;
-            animationIndex = 0;
-        }
-
-        // Physics
-        player.vely += GRAVITY;
-        player.y += player.vely;
-
-        // Ground collision
-        if (player.y >= groundY) {
-            player.y = groundY;
-            player.vely = 0;
-            player.isJumping = false;
-            
-            // Reset to idle or running after landing - FIXED ANIMATION RESET
-            if (currentState == AnimationState::JUMPING) {
-                currentState = moving ? AnimationState::RUNNING : AnimationState::IDLE;
-                currentAnimation = moving ? &running : &idle;
-                animationIndex = 0;
-            }
-        }
-
-        // Animation update
-        timeBuffer += deltaTime;
-        if (timeBuffer > FRAME_DURATION) {
-            timeBuffer = 0;
-            animationIndex = (animationIndex + 1) % currentAnimation->size();
-        }
-
-        // Rendering
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderClear(renderer);
-
-        // Get current frame
-        if (currentAnimation && animationIndex < currentAnimation->size()) {
-            auto currentPair = (*currentAnimation)[animationIndex];
-            size_t position = currentPair.second + currentPair.first * nbCol;
-            
-            if (position < rects.size()) {
-                // Draw player
-                SDL_Rect dest_rect = {
-                    static_cast<int>(player.x),
-                    static_cast<int>(player.y),
-                    player.width,
-                    player.height
-                };
-
-                SDL_RenderCopyEx(
-                    renderer,
-                    hero,
-                    &rects[position],
-                    &dest_rect,
-                    0,
-                    NULL,
-                    facingRight ? SDL_FLIP_NONE : SDL_FLIP_HORIZONTAL
-                );
-            }
-        }
-
-        // Draw ground line (for debugging)
-        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-        SDL_RenderDrawLine(renderer, 0, static_cast<int>(groundY), 
-                          SCREEN_WIDTH, static_cast<int>(groundY));
-
-        SDL_RenderPresent(renderer);
-        SDL_Delay(10);  // Cap frame rate
+        // Get keyboard state
+        const Uint8* keys = SDL_GetKeyboardState(NULL);
+        
+        // Handle input
+        handleInput(game, keys);
+        
+        // Update game state
+        updateGame(game, deltaTime);
+        
+        // Render game
+        renderGame(game);
+        
+        // Cap frame rate
+        SDL_Delay(16); // ~60 FPS
     }
-
-    // Cleanup
-    SDL_DestroyTexture(hero);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    IMG_Quit();
-    SDL_Quit();
     
+    // Cleanup
+    cleanup(game);
     return 0;
 }
