@@ -1,57 +1,9 @@
+#include "settings.h"
+
 #include "SDL2/SDL.h"
 #include "SDL2/SDL_image.h"
+
 #include <iostream>
-#include <vector>
-
-// Game constants
-const int SCREEN_WIDTH = 640;
-const int SCREEN_HEIGHT = 480;
-const float GRAVITY = 0.5f;
-const float JUMP_FORCE = -12.0f;
-const float PLAYER_SPEED = 5.0f;
-const int ANIMATION_FRAME_DURATION = 150; // ms
-
-// Animation states
-enum class AnimationState {
-    IDLE,
-    RUNNING,
-    JUMPING,
-    CROUCHING,
-    ATTACKING
-};
-
-// Player structure
-struct Player {
-    float x, y;
-    float velx, vely;
-    bool isJumping;
-    int width, height;
-    AnimationState state;
-    bool facingRight;
-};
-
-// Animation frame definition
-struct Animation {
-    int startRow;         // Starting row in sprite sheet
-    int frameCount;       // Total number of frames
-    bool multiRow;        // Does this animation span multiple rows?
-    int framesPerRow;     // Frames per row if multiRow is true
-};
-
-// Game resources
-struct Game {
-    SDL_Window* window;
-    SDL_Renderer* renderer;
-    SDL_Texture* playerTexture;
-    Player player;
-    float groundY;
-    std::vector<Animation> animations;
-    int currentAnimIndex;
-    int animFrame;
-    double animTimer;
-};
-
-// Initialize SDL and create window
 bool initSDL(Game& game) {
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << std::endl;
@@ -260,59 +212,4 @@ void cleanup(Game& game) {
     SDL_DestroyWindow(game.window);
     IMG_Quit();
     SDL_Quit();
-}
-
-int WinMain(int argc, char* argv[]) {
-    Game game;
-    
-    // Initialize everything
-    if (!initSDL(game)) return 1;
-    if (!loadResources(game)) {
-        cleanup(game);
-        return 1;
-    }
-    initGame(game);
-    
-    // Main game loop
-    bool running = true;
-    Uint32 lastTime = SDL_GetTicks();
-    
-    while (running) {
-        // Calculate delta time
-        Uint32 currentTime = SDL_GetTicks();
-        double deltaTime = currentTime - lastTime;
-        lastTime = currentTime;
-        
-        // Event handling
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
-                running = false;
-            }
-            else if (event.type == SDL_KEYDOWN) {
-                if (event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
-                    running = false;
-                }
-            }
-        }
-        
-        // Get keyboard state
-        const Uint8* keys = SDL_GetKeyboardState(NULL);
-        
-        // Handle input
-        handleInput(game, keys);
-        
-        // Update game state
-        updateGame(game, deltaTime);
-        
-        // Render game
-        renderGame(game);
-        
-        // Cap frame rate
-        SDL_Delay(16); // ~60 FPS
-    }
-    
-    // Cleanup
-    cleanup(game);
-    return 0;
 }
